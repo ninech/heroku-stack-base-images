@@ -76,6 +76,7 @@ write_package_list() {
 	done
 }
 
+
 RUN_IMAGE_TAG="${REPO}:${STACK_VERSION}"
 RUN_DOCKERFILE_DIR="heroku-${STACK_VERSION}"
 [[ -d "${RUN_DOCKERFILE_DIR}" ]] || abort "fatal: directory ${RUN_DOCKERFILE_DIR} not found"

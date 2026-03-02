@@ -1,0 +1,107 @@
+name: Build and Publish Nightly
+
+on:
+  workflow_call:
+    inputs:
+      publish:
+        description: "Whether to publish the built images as nightly"
+        type: boolean
+        default: true
+
+permissions:
+  packages: write
+
+jobs:
+  build:
+    name: "Build deploio-heroku:${{ matrix.stack-version }} (${{ matrix.arch }}) image"
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ["amd64", "arm64"]
+        stack-version: ["24"]
+    env:
+      DOCKER_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/deploio-heroku
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Build base image groups
+        run: bin/build.sh "${{ matrix.stack-version }}" "${{ matrix.arch }}"
+      - name: Export base images from the Docker daemon
+        if: ${{ inputs.publish }}
+        run: |
+          docker save $(docker images --format '{{.Repository}}:{{.Tag}}' | grep "${DOCKER_IMAGE_NAME}:${{ matrix.stack-version }}") | zstd -T0 --long=31 -o images.tar.zst
+      - name: Save base image exports to the cache
+        if: ${{ inputs.publish }}
+        uses: actions/cache/save@v5
+        with:
+          key: ${{ github.run_id }}-${{ matrix.stack-version }}-${{ matrix.arch }}
+          path: images.tar.zst
+
+  publish-nightly-images:
+    if: ${{ inputs.publish }}
+    name: "Publish nightly deploio-heroku:${{ matrix.stack-version }} (${{ matrix.arch }}) image"
+    needs:
+      - build
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ["amd64", "arm64"]
+        stack-version: ["24"]
+    env:
+      DOCKER_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/deploio-heroku
+    steps:
+      - name: Restore base images from the cache
+        uses: actions/cache/restore@v5
+        with:
+          fail-on-cache-miss: true
+          key: ${{ github.run_id }}-${{ matrix.stack-version }}-${{ matrix.arch }}
+          path: images.tar.zst
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
+      - name: Load Docker images into the Docker daemon
+        run: zstd -dc --long=31 images.tar.zst | docker load
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish base images to registry
+        run: |
+          for variant in "" "-build"; do
+            srcTag="${DOCKER_IMAGE_NAME}:${{ matrix.stack-version }}${variant}"
+            nightlyTag="${srcTag}_linux-${{ matrix.arch }}.nightly"
+            docker tag "${srcTag}" "${nightlyTag}"
+            docker push "${nightlyTag}"
+          done
+
+  publish-nightly-multi-arch:
+    if: ${{ inputs.publish }}
+    name: "Publish nightly deploio-heroku:${{ matrix.stack-version }} multi-arch indices"
+    needs:
+      - publish-nightly-images
+    runs-on: ubuntu-24.04
+    env:
+      DOCKER_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/deploio-heroku
+    strategy:
+      fail-fast: false
+      matrix:
+        stack-version: ["24"]
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish multi-arch image index
+        run: |
+          for variant in '' '-build'; do
+            armTag="${DOCKER_IMAGE_NAME}:${{ matrix.stack-version }}${variant}_linux-arm64.nightly"
+            amdTag="${DOCKER_IMAGE_NAME}:${{ matrix.stack-version }}${variant}_linux-amd64.nightly"
+            nightlyIndex="${DOCKER_IMAGE_NAME}:${{ matrix.stack-version }}${variant}.nightly"
+            docker manifest create "${nightlyIndex}" "${amdTag}" "${armTag}"
+            docker manifest push "${nightlyIndex}"
+          done

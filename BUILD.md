@@ -34,6 +34,12 @@ The `*-build` variants include all the packages from the non-build variant by de
 
 We use GitHub Actions to build and release the base images:
 
-* Any push to `main` will build the images and push the nightly GitHub Container Registry tag variants (such as `ghcr.io/ninech/deploio-heroku:24-build.nightly`).
-* Any new Git tag will build the image and push the latest GitHub Container Registry tag (such as `ghcr.io/ninech/deploio-heroku:24-build`),
-  as well as a versioned tag (such as `ghcr.io/ninech/deploio-heroku:24-build.v123`).
+* Any push to `main` will build the images (proves that images can be build)
+* A nightly job pushes `nightly` tagged GitHub Container Registry variants (such as `ghcr.io/ninech/deploio-heroku:24-build.nightly`).
+* A special release pipeline will run every 2 weeks automatically and create a new `stable`
+  tag of the `run` and `build` images. A new tag and github release will also be created automatically. This
+  pipeline can also be started manually to quickly release a new `stable` version.
+
+The message attached to the github release will contain all changed Ubuntu
+packages (and their versions) and messages made by the conventional commit
+preambles `fix`, `feat` and `breaking change`.
