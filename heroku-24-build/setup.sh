@@ -62,3 +62,6 @@ rm -rf /root/*
 rm -rf /tmp/*
 rm -rf /var/cache/apt/archives/*.deb
 rm -rf /var/lib/apt/lists/*
+
+# allow the heroku go buildpack to get information from git (build/run user split)
+for path in /workspace /workspace/source-ws /workspace/source; do git config --system --add safe.directory "${path}"; done
