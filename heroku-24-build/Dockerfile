@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=ninech/heroku-run:24
+ARG BASE_IMAGE=ghcr.io/ninech/deploio-heroku:24
 FROM $BASE_IMAGE
 
 # We have to temporarily switch back to root, since the run image sets a non-root default `USER`.
