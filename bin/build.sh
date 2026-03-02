@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 . bin/stack-helpers.sh
 
-REPO="heroku/heroku"
+REPO="${DOCKER_IMAGE_NAME:-ghcr.io/ninech/deploio-heroku}"
 STACK_VERSION=${1:-"NAN"}
 read -ra ARCHS <<< "${@:2}"
 BASE_NAME=$(basename "${BASH_SOURCE[0]}")
@@ -51,25 +51,10 @@ if docker info -f "{{ .DriverStatus }}" | grep -qF "io.containerd.snapshotter.";
 	have_containerd_snapshotter=1;
 fi
 
-if (( STACK_VERSION <= 22 )); then
-	# heroku/heroku:22 and prior images do not support multiple chip
-	# architectures or multi-arch images. Instead, they are amd64 only.
-	if (( ${#ARCHS[@]} == 0 )); then
-		ARCHS=("amd64")
-	fi
-	# heroku/heroku:22 and prior images need separate *cnb* variants that
-	# add compatibility for Cloud Native Buildpacks.
-	VARIANTS=("-build:" "-cnb:" "-cnb-build:-build")
-else
-	# heroku/heroku:24 and beyond support amd64 and arm64 and are published
-	# as multi-arch images.
-	if (( ${#ARCHS[@]} == 0 )); then
-		ARCHS=("amd64" "arm64")
-	fi
-	# heroku/heroku:24 and beyond images include CNB specific
-	# modifications, so separate *cnb* variants are not created.
-	VARIANTS=("-build:")
+if (( ${#ARCHS[@]} == 0 )); then
+	ARCHS=("amd64" "arm64")
 fi
+VARIANTS=("-build:")
 
 if (( ${#ARCHS[@]} > 1 )) && [[ ! $have_containerd_snapshotter ]] ; then
 	>&2 print_usage
@@ -124,13 +109,9 @@ for VARIANT in "${VARIANTS[@]}"; do
 		--build-arg "BASE_IMAGE=${DEPENDENCY_IMAGE_TAG}" \
 		--tag "${VARIANT_IMAGE_TAG}" "${VARIANT_DOCKERFILE_DIR}" | indent
 
-	# generate the package list for non-cnb variants. cnb variants don't
-	# influence the list of installed packages.
-	if [[ ! "$VARIANT_NAME" = -cnb* ]]; then
-		write_package_list "$VARIANT_IMAGE_TAG" "$VARIANT_DOCKERFILE_DIR"
-	fi
+	write_package_list "$VARIANT_IMAGE_TAG" "$VARIANT_DOCKERFILE_DIR"
 done
 
 display "Size breakdown..."
 docker images --format "table {{.Repository}}:{{.Tag}}\t{{.Size}}" \
-	| grep -E "(ubuntu|heroku)" | sed '1!G;h;$!d' | indent
+	| grep -E "(ubuntu|ninech)" | sed '1!G;h;$!d' | indent

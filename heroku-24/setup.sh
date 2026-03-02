@@ -167,8 +167,8 @@ rm /usr/lib/ssl/cert.pem
 # that we have to remove before creating our own (`userdel` will remove the group too).
 userdel ubuntu --remove
 
-groupadd heroku --gid 1000
-useradd heroku --uid 1000 --gid 1000 --shell /bin/bash --create-home
+groupadd deploio --gid 1000
+useradd deploio --uid 1000 --gid 1000 --shell /bin/bash --create-home
 
 rm -rf /root/*
 rm -rf /tmp/*

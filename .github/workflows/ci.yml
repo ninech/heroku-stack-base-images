@@ -14,7 +14,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write
+  packages: write
 
 jobs:
   shellcheck:
@@ -34,10 +34,9 @@ jobs:
       fail-fast: false
       matrix:
         arch: ["amd64", "arm64"]
-        stack-version: ["22", "24"]
-        exclude:
-          - arch: "arm64"
-            stack-version: "22"
+        stack-version: ["24"]
+    env:
+      DOCKER_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/deploio-heroku
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -52,51 +51,16 @@ jobs:
             git diff
             exit 1
           fi
-      - name: Generate Heroku runtime image files
-        if: matrix.arch == 'amd64'
-        run: |
-          bin/generate-runtime-images.sh ${{ matrix.stack-version }}
       - name: Export base images from the Docker daemon
         if: github.ref_name == 'main' || github.ref_type == 'tag'
         run: |
-          docker save $(docker images --format '{{.Repository}}:{{.Tag}}' | grep "heroku/heroku:${{ matrix.stack-version }}") |  zstd -T0 --long=31 -o images.tar.zst
+          docker save $(docker images --format '{{.Repository}}:{{.Tag}}' | grep "${DOCKER_IMAGE_NAME}:${{ matrix.stack-version }}") | zstd -T0 --long=31 -o images.tar.zst
       - name: Save OCI base image exports to the cache
         if: github.ref_name == 'main' || github.ref_type == 'tag'
         uses: actions/cache/save@v5
         with:
           key: ${{ github.run_id}}-${{ matrix.stack-version }}-${{ matrix.arch }}
           path: images.tar.zst
-      - name: Save Heroku runtime image files to the cache
-        if: matrix.arch == 'amd64' && github.ref_type == 'tag'
-        uses: actions/cache/save@v5
-        with:
-          key: runtime-images-${{ github.run_id}}-${{ matrix.stack-version }}
-          path: /tmp/heroku-${{ matrix.stack-version }}*
-
-  upload-runtime-images:
-    if: github.ref_type == 'tag'
-    name: "Upload heroku-${{ matrix.stack-version }} runtime images"
-    needs:
-      - build
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        stack-version: ["22", "24"]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-      - name: Restore heroku runtime images from the cache
-        uses: actions/cache/restore@v5
-        with:
-          fail-on-cache-miss: true
-          key: runtime-images-${{ github.run_id}}-${{ matrix.stack-version }}
-          path: /tmp/heroku-${{ matrix.stack-version }}*
-      - name: Upload heroku runtime images to staging
-        run: bin/upload-runtime-images.sh ${{ matrix.stack-version }} ${{ github.sha }}
-        env:
-          MANIFEST_APP_TOKEN: "${{ secrets.MANIFEST_APP_TOKEN }}"
-          MANIFEST_APP_URL: "${{ secrets.MANIFEST_APP_URL }}"
 
   publish-images:
     if: github.ref_name == 'main' || github.ref_type == 'tag'
@@ -106,14 +70,12 @@ jobs:
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     env:
       TAG_SUFFIX: ".${{ github.ref_type == 'tag' && github.ref_name || 'nightly' }}"
+      DOCKER_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/deploio-heroku
     strategy:
       fail-fast: false
       matrix:
         arch: ["amd64", "arm64"]
-        stack-version: ["22", "24"]
-        exclude:
-          - arch: "arm64"
-            stack-version: "22"
+        stack-version: ["24"]
     steps:
       - name: Restore base images from the cache
         uses: actions/cache/restore@v5
@@ -125,34 +87,15 @@ jobs:
           SEGMENT_DOWNLOAD_TIMEOUT_MINS: 1
       - name: Load Docker images into the Docker daemon
         run: zstd -dc --long=31 images.tar.zst | docker load
-      - name: Log in to Docker Hub
-        run: echo '${{ secrets.DOCKER_HUB_TOKEN }}' | docker login -u '${{ secrets.DOCKER_HUB_USERNAME }}' --password-stdin
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ secrets.AWS_ECR_ROLE }}
-          aws-region: ${{ vars.AWS_REGION }}
-      - name: Log in to Amazon ECR Public
-        id: login-ecr-public
-        uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076 # v2.0.1
-        with:
-          registry-type: public
-      - name: Publish base images to registries
+      - name: Log in to GitHub Container Registry
+        run: echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+      - name: Publish base images to registry
         run: |
-          variants=("" "-build")
-          platformSuffix=""
-          if (( ${{ matrix.stack-version }} >= 24 )); then
-            platformSuffix="_linux-${{ matrix.arch }}"
-          else
-            variants+=("-cnb" "-cnb-build")
-          fi
-          for variant in "${variants[@]}"; do
-            srcTag="heroku/heroku:${{ matrix.stack-version}}${variant}"
-            destTag="${srcTag}${platformSuffix}${TAG_SUFFIX}"
-            for host in "docker.io" "public.ecr.aws"; do
-              docker tag "${srcTag}" "${host}/${destTag}"
-              docker push "${host}/${destTag}"
-            done
+          for variant in "" "-build"; do
+            srcTag="${DOCKER_IMAGE_NAME}:${{ matrix.stack-version }}${variant}"
+            destTag="${srcTag}_linux-${{ matrix.arch }}${TAG_SUFFIX}"
+            docker tag "${srcTag}" "${destTag}"
+            docker push "${destTag}"
           done
 
   publish-indices:
@@ -163,99 +106,54 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       TAG_SUFFIX: ".${{ github.ref_type == 'tag' && github.ref_name || 'nightly' }}"
+      DOCKER_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/deploio-heroku
     strategy:
       fail-fast: false
       matrix:
         stack-version: ["24"]
     steps:
-      - name: Log in to Docker Hub
-        run: echo '${{ secrets.DOCKER_HUB_TOKEN }}' | docker login -u '${{ secrets.DOCKER_HUB_USERNAME }}' --password-stdin
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ secrets.AWS_ECR_ROLE }}
-          aws-region: ${{ vars.AWS_REGION }}
-      - name: Log in to Amazon ECR Public
-        id: login-ecr-public
-        uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076 # v2.0.1
-        with:
-          registry-type: public
+      - name: Log in to GitHub Container Registry
+        run: echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
       - name: Publish multi-arch image index
         run: |
           for variant in '' '-build'; do
-            indexTag="heroku/heroku:${{ matrix.stack-version }}${variant}${TAG_SUFFIX}"
-            armTag="heroku/heroku:${{ matrix.stack-version }}${variant}_linux-arm64${TAG_SUFFIX}"
-            amdTag="heroku/heroku:${{ matrix.stack-version }}${variant}_linux-amd64${TAG_SUFFIX}"
-            for host in 'docker.io' 'public.ecr.aws'; do
-              docker buildx imagetools create \
-                --tag "${host}/${indexTag}" \
-                "${host}/${amdTag}" \
-                "${host}/${armTag}"
-            done
+            indexTag="${DOCKER_IMAGE_NAME}:${{ matrix.stack-version }}${variant}${TAG_SUFFIX}"
+            armTag="${DOCKER_IMAGE_NAME}:${{ matrix.stack-version }}${variant}_linux-arm64${TAG_SUFFIX}"
+            amdTag="${DOCKER_IMAGE_NAME}:${{ matrix.stack-version }}${variant}_linux-amd64${TAG_SUFFIX}"
+            docker manifest create "${indexTag}" "${amdTag}" "${armTag}"
+            docker manifest push "${indexTag}"
           done
-
-  ctc-check:
-    name: Obtain CTC Lock
-    if: github.ref_type == 'tag'
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Obtain CTC Lock via TPS API
-        run: |
-          curl -sS --connect-timeout 5 --fail-with-body --retry-connrefused --retry 5 \
-            -X PUT \
-            -H "ACCEPT: application/json" \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Token ${{ secrets.TPS_TOKEN }}" \
-            -d '{"lock": {"sha": "${{ github.sha }}", "component_slug": "${{ vars.tps_component }}"}}' \
-            "${{ secrets.TPS_CTC_API_URL }}"
 
   promote-tags:
     if: github.ref_type == 'tag'
     name: "Promote heroku-${{ matrix.stack-version }} tags"
     needs:
-      - ctc-check
       - publish-images
       - publish-indices
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        stack-version: ["22", "24"]
+        stack-version: ["24"]
+    env:
+      DOCKER_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/deploio-heroku
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-      - name: Log in to Docker Hub
-        run: echo '${{ secrets.DOCKER_HUB_TOKEN }}' | docker login -u '${{ secrets.DOCKER_HUB_USERNAME }}' --password-stdin
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ secrets.AWS_ECR_ROLE }}
-          aws-region: ${{ vars.AWS_REGION }}
-      - name: Log in to Amazon ECR Public
-        id: login-ecr-public
-        uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076 # v2.0.1
-        with:
-          registry-type: public
+      - name: Log in to GitHub Container Registry
+        run: echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
       - name: Install crane
         uses: buildpacks/github-actions/setup-tools@f3ec16c6d708761c6e87bbc8fe7f97375f80e7cd # v5.10.1
       - name: Promote images to stable tag
         run: |
           destTags=( )
-          if (( ${{ matrix.stack-version }} >= 24 )); then
-            for variant in '' '-build'; do
-              for arch in 'amd64' 'arm64'; do
-                destTags+=("heroku/heroku:${{ matrix.stack-version }}${variant}_linux-${arch}")
-              done
-              destTags+=("heroku/heroku:${{ matrix.stack-version }}${variant}")
+          for variant in '' '-build'; do
+            for arch in 'amd64' 'arm64'; do
+              destTags+=("${DOCKER_IMAGE_NAME}:${{ matrix.stack-version }}${variant}_linux-${arch}")
             done
-          else
-            for variant in '' '-build' '-cnb' '-cnb-build'; do
-              destTags+=("heroku/heroku:${{ matrix.stack-version }}${variant}")
-            done
-          fi
+            destTags+=("${DOCKER_IMAGE_NAME}:${{ matrix.stack-version }}${variant}")
+          done
           for destTag in "${destTags[@]}"; do
             srcTag="${destTag}.${{ github.ref_name }}"
-            for host in "docker.io" "public.ecr.aws"; do
-              crane copy "${host}/${srcTag}" "${host}/${destTag}"
-            done
+            crane copy "${srcTag}" "${destTag}"
           done
