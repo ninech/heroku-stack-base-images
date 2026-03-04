@@ -28,9 +28,15 @@ if [[ -z "$latest_tag" ]]; then
   from_tag=""
 else
   tag_number="${latest_tag#v}"
-  next_number=$((tag_number + 1))
-  next_tag="v${next_number}"
-  from_tag="$latest_tag"
+  if [[ "$tag_number" =~ ^[0-9]+$ ]]; then
+    next_number=$((tag_number + 1))
+    next_tag="v${next_number}"
+    from_tag="$latest_tag"
+  else
+    # Tag uses a non-integer version (e.g. v0.0.1); start the new scheme at v1
+    next_tag="v1"
+    from_tag="$latest_tag"
+  fi
 fi
 
 {
