@@ -1,0 +1,14 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  packages: write
+
+jobs:
+  build-and-publish-nightly:
+    uses: ./.github/workflows/build-and-publish-nightly.yml
+    secrets: inherit

@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  schedule:
+    - cron: "0 7 1,15 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-and-publish-nightly:
+    uses: ./.github/workflows/build-and-publish-nightly.yml
+    secrets: inherit
+
+  check-digest:
+    name: "Check if release is needed"
+    needs: build-and-publish-nightly
+    runs-on: ubuntu-24.04
+    outputs:
+      should-release: ${{ steps.check.outputs.should-release }}
+      next-tag: ${{ steps.check.outputs.next-tag }}
+      from-tag: ${{ steps.check.outputs.from-tag }}
+    env:
+      DOCKER_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/deploio-heroku
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Install crane
+        uses: buildpacks/github-actions/setup-tools@f3ec16c6d708761c6e87bbc8fe7f97375f80e7cd # v5.10.1
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Check digests and determine if release is needed
+        id: check
+        run: bin/check-digest.sh
+
+  release:
+    name: "Release deploio-heroku-${{ matrix.stack-version }}"
+    needs: check-digest
+    if: needs.check-digest.outputs.should-release == 'true'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        stack-version: ["24"]
+    env:
+      DOCKER_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/deploio-heroku
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Install crane
+        uses: buildpacks/github-actions/setup-tools@f3ec16c6d708761c6e87bbc8fe7f97375f80e7cd # v5.10.1
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate release notes
+        run: |
+          bin/generate-release-notes.sh \
+            "${{ matrix.stack-version }}" \
+            "${DOCKER_IMAGE_NAME}" \
+            "${{ needs.check-digest.outputs.from-tag }}" \
+            > /tmp/release-notes.md
+      - name: Promote nightly images to versioned and stable tags
+        run: |
+          nextTag="${{ needs.check-digest.outputs.next-tag }}"
+          for variant in '' '-build'; do
+            for arch in 'amd64' 'arm64'; do
+              src="${DOCKER_IMAGE_NAME}:${{ matrix.stack-version }}${variant}_linux-${arch}.nightly"
+              versioned="${DOCKER_IMAGE_NAME}:${{ matrix.stack-version }}${variant}_linux-${arch}.${nextTag}"
+              stable="${DOCKER_IMAGE_NAME}:${{ matrix.stack-version }}${variant}_linux-${arch}"
+              crane copy "${src}" "${versioned}"
+              crane copy "${src}" "${stable}"
+            done
+            src_index="${DOCKER_IMAGE_NAME}:${{ matrix.stack-version }}${variant}.nightly"
+            versioned_index="${DOCKER_IMAGE_NAME}:${{ matrix.stack-version }}${variant}.${nextTag}"
+            stable_index="${DOCKER_IMAGE_NAME}:${{ matrix.stack-version }}${variant}"
+            crane copy "${src_index}" "${versioned_index}"
+            crane copy "${src_index}" "${stable_index}"
+          done
+      - name: Create git tag and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ needs.check-digest.outputs.next-tag }}"
+          git push origin "${{ needs.check-digest.outputs.next-tag }}"
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "${{ needs.check-digest.outputs.next-tag }}" --title "${{ needs.check-digest.outputs.next-tag }}" --notes-file /tmp/release-notes.md
