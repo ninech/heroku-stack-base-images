@@ -26,7 +26,7 @@ Add the package you want to the appropriate `setup.sh` for example `heroku-24/se
 +    libc6-dev
 ```
 
-Once done, run `bin/build.sh` locally to generate the corresponding `installed-packages*` files. Multi-arch base images (heroku-24 and beyond) will produce an `installed-packages-$ARCH.txt` for each architecture.
+Once done, run `bin/build.sh` locally to generate the corresponding `installed-packages*` files. Multi-arch base images (deploio-heroku:24 and beyond) will produce an `installed-packages-$ARCH.txt` for each architecture.
 
 The `*-build` variants include all the packages from the non-build variant by default. This means that if you're adding a package to both, you only need to add them to the non-build variant. The example above will add `libc6-dev` to both `heroku-24` and `heroku-24-build`.
 
@@ -42,4 +42,4 @@ We use GitHub Actions to build and release the base images:
 
 The message attached to the github release will contain all changed Ubuntu
 packages (and their versions) and messages made by the conventional commit
-preambles `fix`, `feat` and `breaking change`.
+preambles `fix`, `feat` and `BREAKING CHANGE`.
