@@ -166,14 +166,14 @@ echo "## Package Changelog"
 echo ""
 
 if [[ -n "$run_section" ]]; then
-    echo "### Run image (\`heroku-${STACK_VERSION}\`)"
+    echo "### Run and build image (\`deploio-heroku:${STACK_VERSION}\`)"
     echo ""
     echo -n "$run_section"
     echo ""
 fi
 
 if [[ -n "$build_only_section" ]]; then
-    echo "### Build time only (\`heroku-${STACK_VERSION}-build\`)"
+    echo "### Build time only (\`deploio-heroku:${STACK_VERSION}-build\`)"
     echo ""
     echo -n "$build_only_section"
     echo ""
