@@ -22,7 +22,7 @@ for variant in "" "-build"; do
   fi
 done
 
-latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+latest_tag=$(git tag --list 'v[0-9]*' --sort=-version:refname 2>/dev/null | head -1 || echo "")
 if [[ -z "$latest_tag" ]]; then
   next_tag="v1"
   from_tag=""
