@@ -36,7 +36,7 @@ We use GitHub Actions to build and release the base images:
 
 * Any push to `main` will build the images (proves that images can be build)
 * A nightly job pushes `nightly` tagged GitHub Container Registry variants (such as `ghcr.io/ninech/deploio-heroku:24-build.nightly`).
-* A special release pipeline will run every 2 weeks automatically and create a new `stable`
+* A special release pipeline will run every Sunday automatically and create a new `stable`
   tag of the `run` and `build` images. A new tag and github release will also be created automatically. This
   pipeline can also be started manually to quickly release a new `stable` version.
 
